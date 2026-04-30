@@ -1,9 +1,11 @@
 import {
   CHAIN_V3_CONFIG,
+  SLOT0_SQRT_PRICE_ABI,
   UNI_V3_FEE_TIERS,
   discoverV3Pool,
   priceFromSqrtPriceX96,
 } from "./uniV3PoolDiscovery";
+import { ethers } from "ethers";
 
 const Q96 = BigInt(2) ** BigInt(96);
 
@@ -18,8 +20,6 @@ describe("priceFromSqrtPriceX96", () => {
   });
 
   it("applies the (decimals0 - decimals1) adjustment", () => {
-    // raw price = 1; token0 has 12 more decimals than token1, so 1 token0
-    // (human) = 10^12 token1 (human).
     expect(priceFromSqrtPriceX96(Q96, 18, 6)).toBeCloseTo(1e12, 0);
     expect(priceFromSqrtPriceX96(Q96, 6, 18)).toBeCloseTo(1e-12, 18);
   });
@@ -29,13 +29,9 @@ describe("priceFromSqrtPriceX96", () => {
   });
 
   it("recovers the WETH/USDC ratio at a realistic spot", () => {
-    // USDC/WETH 0.05% on Ethereum; token0 = USDC (6 dec), token1 = WETH (18 dec).
-    // At 1 ETH = $3000 the raw token1/token0 ratio is 10^18 / (3000 * 10^6)
-    // = 10^12 / 3000, so sqrtPriceX96 ~= sqrt(10^12 / 3000) * 2^96.
     const rawPrice = 1e12 / 3000;
     const sqrtPriceX96 = BigInt(Math.floor(Math.sqrt(rawPrice) * Number(Q96)));
     const price = priceFromSqrtPriceX96(sqrtPriceX96, 6, 18);
-    // price is USDC denominated in WETH (i.e. 1 USDC ~= 1/3000 WETH).
     expect(price).toBeCloseTo(1 / 3000, 6);
   });
 });
@@ -51,7 +47,6 @@ describe("CHAIN_V3_CONFIG", () => {
     ] as const) {
       expect(CHAIN_V3_CONFIG[chain]?.factory).toBe(canonicalFactory);
     }
-    // Base uses a Base-specific factory address.
     expect(CHAIN_V3_CONFIG.base?.factory).toBe(
       "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
     );
@@ -78,6 +73,51 @@ describe("CHAIN_V3_CONFIG", () => {
 describe("UNI_V3_FEE_TIERS", () => {
   it("matches the four canonical Uniswap V3 fee tiers", () => {
     expect([...UNI_V3_FEE_TIERS]).toEqual([100, 500, 3000, 10000]);
+  });
+});
+
+describe("SLOT0_SQRT_PRICE_ABI", () => {
+  const sqrtPriceX96 = BigInt("123456789012345678901234567890");
+
+  it("decodes the first return word from canonical 7-field slot0 data", () => {
+    const minimalSlot0 = new ethers.Interface([SLOT0_SQRT_PRICE_ABI]);
+    const canonicalSlot0 = new ethers.Interface([
+      "function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint32 feeProtocol, bool unlocked)",
+    ]);
+
+    const encoded = canonicalSlot0.encodeFunctionResult("slot0", [
+      sqrtPriceX96,
+      -123,
+      1,
+      2,
+      3,
+      4,
+      true,
+    ]);
+
+    expect(minimalSlot0.decodeFunctionResult("slot0", encoded)[0]).toBe(
+      sqrtPriceX96,
+    );
+  });
+
+  it("decodes the first return word from 6-field fork slot0 data", () => {
+    const minimalSlot0 = new ethers.Interface([SLOT0_SQRT_PRICE_ABI]);
+    const forkSlot0 = new ethers.Interface([
+      "function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, bool unlocked)",
+    ]);
+
+    const encoded = forkSlot0.encodeFunctionResult("slot0", [
+      sqrtPriceX96,
+      -123,
+      1,
+      2,
+      3,
+      true,
+    ]);
+
+    expect(minimalSlot0.decodeFunctionResult("slot0", encoded)[0]).toBe(
+      sqrtPriceX96,
+    );
   });
 });
 
